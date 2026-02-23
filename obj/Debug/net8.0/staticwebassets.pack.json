@@ -1,6 +1,14 @@
 {
   "Files": [
     {
+      "Id": "/Users/harineepurushothaman/Carnatic/bin/Debug/net8.0/wwwroot/_framework/blazor.webassembly.js",
+      "PackagePath": "staticwebassets/_framework/blazor.webassembly.js"
+    },
+    {
+      "Id": "/Users/harineepurushothaman/Carnatic/obj/Debug/net8.0/compressed/yg3wrzid23.gz",
+      "PackagePath": "staticwebassets/_framework/blazor.webassembly.js.gz"
+    },
+    {
       "Id": "/Users/harineepurushothaman/Carnatic/wwwroot/app.css",
       "PackagePath": "staticwebassets/app.css"
     },
@@ -19,6 +27,10 @@
     {
       "Id": "/Users/harineepurushothaman/Carnatic/wwwroot/favicon.png",
       "PackagePath": "staticwebassets/favicon.png"
+    },
+    {
+      "Id": "/Users/harineepurushothaman/Carnatic/wwwroot/index.html",
+      "PackagePath": "staticwebassets/index.html"
     },
     {
       "Id": "/Users/harineepurushothaman/Carnatic/wwwroot/js/audioInterop.js",
