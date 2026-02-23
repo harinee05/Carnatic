@@ -1,0 +1,111 @@
+# Carnatic Raga Trainer: Comprehensive Documentation
+
+This document covers the conceptual, architectural, and technical details of the Carnatic Raga Trainer application built in .NET C# (Blazor Server).
+
+---
+
+## 1. Project Agenda and Vision
+
+**Goal:** To build a real-time pitch correction and visualization tool specifically tailored for Carnatic music vocalists to practice, track their vocal stability, and correct their pitch against defined Ragas.
+
+**Problem Statement:** Conventional pitch monitors usually map to the 12-Tone Equal Temperament (Western chromatic scale) and assume a fixed A=440Hz reference. Carnatic music, however, is **relative pitch-based**, relying on a chosen tonic (*Shruti/Sa*) and utilizing microtonal intervals (*Swarasthanas/Gamakas*). Singing a Raga correctly requires precision within these specific, relative frequency bands. A generic tuner cannot tell a user if they just sang Antara Gandharam correctly within the context of 1.5 Kattai (C#) Mayamalavagowla.
+
+**Solution:** A web application that understands Carnatic music theory. The app calculates the exact nominal frequencies of all 16 swarasthanas relative to the user's chosen Shruti, listens to the user's voice in real-time by applying the YIN pitch detection algorithm, flags "mistakes" when the voice strays outside the allowed microtonal boundaries of the selected Raga, and provides immediate, color-coded visual feedback.
+
+---
+
+## 2. User Stories & Workflows
+
+### Primary User Flow
+1. **Setup:** The vocalist opens the app. They select the **Raga** they wish to practice (e.g., *Mayamalavagowla*) and their vocal tonic **Shruti** (e.g., *C# - 1.5 Kattai*).
+2. **Contextualization:** The UI displays the Arohanam (ascending notes) and Avarohanam (descending notes) for the chosen Raga. The pitch visualization canvas immediately draws horizontal guide lines corresponding to the exact Hz values of those specific swaras.
+3. **Reference (Optional):** The user clicks "Play Reference." The app generates and plays an ascending and descending scale (arohanam/avarohanam) using a synthetic sine wave, giving the user the exact tuning to match. The reference pitch contour is drawn on the canvas as an overlay.
+4. **Practice:** The user clicks "Record" and begins singing.
+5. **Real-time Feedback:** As they sing, a line is drawn continuously across the scrolling canvas:
+   - 🟢 **Green (In Tune):** Indicates the voice is exactly on a allowed swara (within a ±15 cent margin).
+   - 🟡 **Yellow (Slight Deviation):** Indicates the voice is slightly off the core swara frequency (>15 cents but <50 cents deviation). 
+   - 🔴 **Red & Pulsing Blip (Mistake):** Indicates the voice has strayed completely out of the allowed swara range or is hitting a note not permitted in the Raga.
+6. **Review:** When the user clicks "Stop," the session ends. The app calculates a "Stability Score" representing the percentage of time the user was perfectly in tune, tallies the notes detected, and logs all mistake incidents with their exact time and cent deviation.
+
+---
+
+## 3. Technical Architecture
+
+The application is built using a **Blazor Server** architecture, blending the rapid, stateful UI capabilities of .NET C# with client-side JavaScript for raw audio processing.
+
+### Why Blazor Server?
+We chose Blazor Server because it allows the entire music theory engine, state management, and HTML/CSS generation to remain securely in C# on the backend. This is significantly faster for development than building a separate API and React/Angular frontend. However, it requires a persistent WebSocket (SignalR) connection to the browser. 
+
+### The Hybrid Processing Strategy
+SignalR connections cannot handle the massive throughput required to stream uncompressed raw audio (44,100 floats per second) from the browser to the backend for analysis. To solve this, the architecture is split:
+
+1. **Client-Side (Browser JS):** Captures the microphone, runs the mathematically intense YIN pitch detection algorithm on small chunks of audio (2048 samples), maps the detected frequency to the nearest swara, and renders the 60fps canvas visualization.
+2. **Server-Side (.NET C#):** Acts as the source of truth for all music theory. It computes the precise frequencies for the selected Raga/Shruti and sends this configuration *once* to the JS side. It receives only tiny, aggregated analytical data points from the JS (e.g., `{ time: 1.2s, freq: 140Hz, error: 5 cents, swara: Ri1 }`) to update the UI stats panel.
+
+### Component Relationship Map
+
+```mermaid
+graph TD
+    subgraph Browser (Client)
+        A[Microphone] -->|Web Audio API| B(AudioContext ScriptProcessor)
+        B -->|Chunks of 2048 floats| C{YIN Pitch Detector JS}
+        C -->|Detected Freq Hz| D[Swara Mapping Engine JS]
+        D -->|Cent Deviation, Raga Check| E((Canvas Renderer))
+    end
+    
+    subgraph .NET Blazor Server
+        F[RagaTrainer.razor] <-->|SignalR / JS Interop| D
+        G[CarnaticTheory.cs] -->|Provides Swara Ratios & Raga Rules| F
+        F -->|State Updates| H[Stats Panel UI]
+    end
+```
+
+### Dependencies and Packages
+- **Framework:** .NET 8.0 `Microsoft.AspNetCore.App` web framework.
+- **No external NuGet dependencies:** For security, performance, and cross-platform compatibility, no third-party libraries (like NAudio) were used. The pitch detection, audio capturing, and rendering are entirely custom-built utilizing the browser's native Web Audio API and HTML5 Canvas.
+
+---
+
+## 4. Conceptual & Technical Proofs
+
+### A. The Math of Shrutis and Swaras
+
+Western music uses 12-Tone Equal Temperament (12-TET), where the octave is divided into 12 equal logarithmic steps (semitones). The ratio between any two adjacent semitones is constant: $2^{1/12} \approx 1.05946$.
+
+While traditional Carnatic music theory defines 22 *shrutis* (microtones) using Just Intonation (simple integer ratios like 3/2 or 5/4), modern instrumental performance (especially on harmonium, keyboard, and fretted veena) often normalizes these into the 12 chromatic key positions. Carnatic theory maps 16 *swarasthanas* onto these 12 physical keys, meaning some keys share names depending on the Raga context (e.g., the key for *Ri2* is the identical frequency to *Ga1*).
+
+**The Calculation Proof in `.NET`:**
+When a user selects a Shruti (e.g., "C# - 1.5 Kattai"), the backend provides a base *Sa* frequency ($f_{Sa} = 138.59$ Hz).
+To find the exact frequency of any subsequent Swara, the engine looks up its exact semitone distance ($n$) from Sa and applies the logarithmic formula:
+
+$$ f_{swara} = f_{Sa} \times 2^{n / 12} $$
+
+*Example: Calculating Antara Gandharam (Ga3) for C# Shruti:*
+- $f_{Sa}$ (C#) = 138.59 Hz
+- Ga3 is **4 semitones** above Sa.
+- $f_{Ga3} = 138.59 \times 2^{4/12} = 174.61$ Hz (which is approximately the Western note F)
+
+These exact mathematically derived frequency thresholds are passed to the frontend to draw the guide lines on the canvas.
+
+### B. The YIN Pitch Detection Algorithm
+
+A simple Fast Fourier Transform (FFT) is inadequate for human voice pitch detection because it often confuses harmonics with the fundamental frequency (e.g., thinking a note is an octave higher than it is). 
+
+The app employs the **YIN Algorithm** (De Cheveigné & Kawahara, 2002), a highly accurate, time-domain autocorrelation method designed specifically for monophonic speech and music.
+
+**The Workflow Proof in [audioInterop.js](file:///Users/harineepurushothaman/Carnatic/wwwroot/js/audioInterop.js):**
+1. **Difference Function:** Instead of standard autocorrelation, YIN calculates the squared difference between the audio signal and a delayed version of itself.
+2. **Cumulative Mean Normalized Difference (CMND):** It normalizes the difference function to prevent the algorithm from selecting a delay of zero (which would falsely indicate infinite pitch).
+3. **Absolute Thresholding:** It scans the CMND for the first dip that falls below a confidence threshold (set to `0.15`). This first significant dip corresponds to the true fundamental period of the waveform, ignoring higher harmonics.
+4. **Parabolic Interpolation:** Because the audio is sampled at discrete intervals (44.1kHz), the true minimum might fall *between* two samples. YIN fits a mathematical parabola to the points around the dip and calculates the precise fractional minimum, allowing for sub-sample accuracy.
+
+$$ \text{Detected Frequency} = \frac{\text{Sample Rate}}{\text{Interpolated Period}} $$
+
+### C. Cent Deviation Mapping
+
+Once a raw frequency is detected, it must be evaluated against the Raga. 
+
+1. **Find nearest semitone distance from Sa:** 
+   $$ n = 12 \times \log_2 \left(\frac{f_{detected}}{f_{Sa}}\right) $$
+2. **Convert the decimal remainder to "cents":** (1 semitone = 100 cents)
+3. **Raga Compliance Check:** If the nearest semitone maps to a Swara defined in the chosen Raga's Arohanam/Avarohanam, AND the cent deviation is within the mathematical threshold ($\pm50$ cents), the note is logged as **Correct**. Otherwise, it is a **Mistake**. This entire mathematical loop processes every 46 milliseconds in the browser effortlessly.

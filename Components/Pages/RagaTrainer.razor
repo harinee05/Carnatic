@@ -1,0 +1,373 @@
+@page "/"
+@rendermode InteractiveServer
+@using Carnatic.Models
+@using Carnatic.Services
+@inject IJSRuntime JSRuntime
+@implements IAsyncDisposable
+
+<PageTitle>Carnatic Raga Trainer</PageTitle>
+
+<div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+        <div class="header-brand">
+            <span class="brand-icon">🎵</span>
+            <h1>Carnatic Raga Trainer</h1>
+        </div>
+        <p class="header-subtitle">Visualize • Practice • Perfect your pitch</p>
+    </header>
+
+    <!-- Controls Panel -->
+    <section class="controls-panel">
+        <div class="control-group">
+            <label class="control-label">
+                <span class="label-icon">🎶</span> Raga
+            </label>
+            <select class="control-select" @bind="selectedRagaName" @bind:after="OnRagaChanged">
+                @foreach (var raga in ragas)
+                {
+                    <option value="@raga.Name">@raga.DisplayName</option>
+                }
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label class="control-label">
+                <span class="label-icon">🔊</span> Shruti (Tonic)
+            </label>
+            <select class="control-select" @bind="selectedShrutiName" @bind:after="OnShrutiChanged">
+                @foreach (var shruti in shrutis)
+                {
+                    <option value="@shruti.Name">@shruti.DisplayName</option>
+                }
+            </select>
+        </div>
+
+        <div class="control-group control-actions">
+            <button class="btn @(isRecording ? "btn-stop" : "btn-record")"
+                    @onclick="ToggleRecording"
+                    disabled="@(!isInitialized)">
+                <span class="btn-icon">@(isRecording ? "⏹" : "⏺")</span>
+                @(isRecording ? "Stop" : "Record")
+            </button>
+            <button class="btn btn-reference"
+                    @onclick="PlayReference"
+                    disabled="@(isRecording || !isInitialized)">
+                <span class="btn-icon">▶</span>
+                Play Reference
+            </button>
+        </div>
+    </section>
+
+    <!-- Raga Info Card -->
+    @if (selectedRaga != null)
+    {
+        <section class="raga-info-card">
+            <div class="raga-info-header">
+                <h3>@selectedRaga.DisplayName</h3>
+                <span class="raga-badge">Mela @selectedRaga.MelaNumber</span>
+            </div>
+            <p class="raga-description">@selectedRaga.Description</p>
+            <div class="raga-swaras">
+                <div class="swara-row">
+                    <span class="swara-label">Arohanam:</span>
+                    <div class="swara-sequence">
+                        @foreach (var swara in selectedRaga.Arohanam)
+                        {
+                            <span class="swara-chip">@GetSwaraDisplayName(swara)</span>
+                        }
+                        <span class="swara-chip swara-octave">Ṡ</span>
+                    </div>
+                </div>
+                <div class="swara-row">
+                    <span class="swara-label">Avarohanam:</span>
+                    <div class="swara-sequence">
+                        <span class="swara-chip swara-octave">Ṡ</span>
+                        @foreach (var swara in selectedRaga.Avarohanam)
+                        {
+                            <span class="swara-chip">@GetSwaraDisplayName(swara)</span>
+                        }
+                    </div>
+                </div>
+            </div>
+        </section>
+    }
+
+    <!-- Pitch Visualization Canvas -->
+    <section class="visualization-section">
+        <div class="viz-header">
+            <h2>Pitch Visualization</h2>
+            @if (isRecording)
+            {
+                <span class="recording-indicator">
+                    <span class="rec-dot"></span> Recording
+                </span>
+            }
+        </div>
+        <div class="canvas-container">
+            <canvas id="pitchCanvas"></canvas>
+        </div>
+    </section>
+
+    <!-- Stats Panel -->
+    <section class="stats-panel">
+        <div class="stat-card">
+            <div class="stat-value @GetStabilityColorClass()">@stabilityScore<span class="stat-unit">%</span></div>
+            <div class="stat-label">Stability Score</div>
+            <div class="stat-bar">
+                <div class="stat-bar-fill" style="width: @stabilityScore%; background: @GetStabilityGradient()"></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value stat-notes">@totalNotesDetected</div>
+            <div class="stat-label">Notes Detected</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value stat-correct">@correctNotes</div>
+            <div class="stat-label">Correct Notes</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value stat-mistakes">@mistakeCount</div>
+            <div class="stat-label">Mistakes</div>
+        </div>
+    </section>
+</div>
+
+@code {
+    // State
+    private bool isInitialized = false;
+    private bool isRecording = false;
+    private DotNetObjectReference<RagaTrainer>? dotNetRef;
+
+    // Music theory
+    private List<Raga> ragas = CarnaticCatalog.GetRagas();
+    private List<Shruti> shrutis = CarnaticCatalog.GetShrutis();
+    private string selectedRagaName = "Mayamalavagowla";
+    private string selectedShrutiName = "C";
+    private Raga? selectedRaga;
+    private Shruti? selectedShruti;
+
+    // Stats
+    private double stabilityScore = 0;
+    private int totalNotesDetected = 0;
+    private int correctNotes = 0;
+    private int mistakeCount = 0;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            dotNetRef = DotNetObjectReference.Create(this);
+            await JSRuntime.InvokeVoidAsync("AudioInterop.initialize", dotNetRef, "pitchCanvas");
+
+            selectedRaga = ragas.FirstOrDefault(r => r.Name == selectedRagaName);
+            selectedShruti = shrutis.FirstOrDefault(s => s.Name == selectedShrutiName);
+
+            await UpdateSwaraConfig();
+            isInitialized = true;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnRagaChanged()
+    {
+        selectedRaga = ragas.FirstOrDefault(r => r.Name == selectedRagaName);
+        await UpdateSwaraConfig();
+        ResetStats();
+    }
+
+    private async Task OnShrutiChanged()
+    {
+        selectedShruti = shrutis.FirstOrDefault(s => s.Name == selectedShrutiName);
+
+        // Stop any playing reference before changing shruti
+        await JSRuntime.InvokeVoidAsync("AudioInterop.stopReference");
+
+        await UpdateSwaraConfig();
+        ResetStats();
+    }
+
+    /// <summary>
+    /// Sends the swara configuration to JS for both visualization and pitch mapping.
+    /// </summary>
+    private async Task UpdateSwaraConfig()
+    {
+        if (selectedRaga == null || selectedShruti == null) return;
+
+        // Swara lines for the canvas visualization
+        var swaraData = selectedRaga.AllowedSwaras
+            .OrderBy(s => CarnaticCatalog.GetSwaraFrequency(s, selectedShruti.SaFrequencyHz))
+            .Select(s => new
+            {
+                name = GetSwaraDisplayName(s),
+                frequencyHz = CarnaticCatalog.GetSwaraFrequency(s, selectedShruti.SaFrequencyHz)
+            })
+            .ToList();
+
+        // Add upper Sa
+        swaraData.Add(new
+        {
+            name = "Ṡ",
+            frequencyHz = CarnaticCatalog.GetSwaraFrequency(Swara.Sa, selectedShruti.SaFrequencyHz, 1)
+        });
+
+        await JSRuntime.InvokeVoidAsync("AudioInterop.setSwaraLines", swaraData);
+
+        // Set Sa frequency for JS pitch mapping
+        await JSRuntime.InvokeVoidAsync("AudioInterop.setSaFrequency", selectedShruti.SaFrequencyHz);
+
+        // Set raga swaras with semitone offsets for JS pitch mapping
+        var swaraSemitones = new Dictionary<Swara, int>
+        {
+            { Swara.Sa, 0 }, { Swara.Ri1, 1 }, { Swara.Ri2, 2 }, { Swara.Ri3, 3 },
+            { Swara.Ga1, 2 }, { Swara.Ga2, 3 }, { Swara.Ga3, 4 },
+            { Swara.Ma1, 5 }, { Swara.Ma2, 6 }, { Swara.Pa, 7 },
+            { Swara.Da1, 8 }, { Swara.Da2, 9 }, { Swara.Da3, 10 },
+            { Swara.Ni1, 9 }, { Swara.Ni2, 10 }, { Swara.Ni3, 11 }
+        };
+
+        var ragaSwaraInfos = selectedRaga.AllowedSwaras
+            .Select(s => new { name = GetSwaraDisplayName(s), semitone = swaraSemitones[s] })
+            .ToList();
+
+        await JSRuntime.InvokeVoidAsync("AudioInterop.setRagaSwaras", ragaSwaraInfos);
+    }
+
+    private async Task ToggleRecording()
+    {
+        if (isRecording)
+        {
+            isRecording = false;
+            await JSRuntime.InvokeVoidAsync("AudioInterop.stopRecording");
+        }
+        else
+        {
+            ResetStats();
+            var success = await JSRuntime.InvokeAsync<bool>("AudioInterop.startRecording");
+            if (success)
+            {
+                isRecording = true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Called from JS with small analyzed pitch results (no large arrays).
+    /// </summary>
+    [JSInvokable]
+    public async Task OnPitchResult(double timeMs, double frequencyHz,
+                                     double centDeviation, bool isInRaga, string swaraName)
+    {
+        totalNotesDetected++;
+        if (isInRaga) correctNotes++;
+        else mistakeCount++;
+
+        if (totalNotesDetected > 0)
+        {
+            stabilityScore = Math.Round((double)correctNotes / totalNotesDetected * 100, 1);
+        }
+
+        // Update UI every 5 results to avoid excessive re-renders
+        if (totalNotesDetected % 5 == 0)
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    /// <summary>
+    /// Called from JS when recording stops with final stats.
+    /// </summary>
+    [JSInvokable]
+    public async Task OnRecordingStopped(double stability, int total, int correct, int mistakes)
+    {
+        isRecording = false;
+        stabilityScore = stability;
+        totalNotesDetected = total;
+        correctNotes = correct;
+        mistakeCount = mistakes;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task PlayReference()
+    {
+        if (selectedRaga == null || selectedShruti == null) return;
+
+        var freqs = new List<double>();
+        foreach (var swara in selectedRaga.Arohanam)
+        {
+            freqs.Add(CarnaticCatalog.GetSwaraFrequency(swara, selectedShruti.SaFrequencyHz));
+        }
+        freqs.Add(CarnaticCatalog.GetSwaraFrequency(Swara.Sa, selectedShruti.SaFrequencyHz, 1));
+        foreach (var swara in selectedRaga.Avarohanam)
+        {
+            freqs.Add(CarnaticCatalog.GetSwaraFrequency(swara, selectedShruti.SaFrequencyHz));
+        }
+
+        await JSRuntime.InvokeVoidAsync("AudioInterop.playReferenceTone", freqs, 0.8);
+    }
+
+    private void ResetStats()
+    {
+        stabilityScore = 0;
+        totalNotesDetected = 0;
+        correctNotes = 0;
+        mistakeCount = 0;
+    }
+
+    private string GetSwaraDisplayName(Swara swara) => swara switch
+    {
+        Swara.Sa => "Sa",
+        Swara.Ri1 => "Ri₁",
+        Swara.Ri2 => "Ri₂",
+        Swara.Ri3 => "Ri₃",
+        Swara.Ga1 => "Ga₁",
+        Swara.Ga2 => "Ga₂",
+        Swara.Ga3 => "Ga₃",
+        Swara.Ma1 => "Ma₁",
+        Swara.Ma2 => "Ma₂",
+        Swara.Pa => "Pa",
+        Swara.Da1 => "Da₁",
+        Swara.Da2 => "Da₂",
+        Swara.Da3 => "Da₃",
+        Swara.Ni1 => "Ni₁",
+        Swara.Ni2 => "Ni₂",
+        Swara.Ni3 => "Ni₃",
+        _ => swara.ToString()
+    };
+
+    private string GetStabilityColorClass() => stabilityScore switch
+    {
+        >= 80 => "stat-great",
+        >= 60 => "stat-good",
+        >= 40 => "stat-ok",
+        _ => "stat-poor"
+    };
+
+    private string GetStabilityGradient() => stabilityScore switch
+    {
+        >= 80 => "linear-gradient(90deg, #00c853, #00e676)",
+        >= 60 => "linear-gradient(90deg, #ffd600, #ffea00)",
+        >= 40 => "linear-gradient(90deg, #ff9100, #ffab40)",
+        _ => "linear-gradient(90deg, #d50000, #ff5252)"
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("AudioInterop.dispose");
+        }
+        catch (JSDisconnectedException)
+        {
+            // Circuit already disconnected — safe to ignore
+        }
+        catch (InvalidOperationException)
+        {
+            // Prerendering — safe to ignore
+        }
+        finally
+        {
+            dotNetRef?.Dispose();
+        }
+    }
+}

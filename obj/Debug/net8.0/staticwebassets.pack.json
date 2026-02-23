@@ -1,0 +1,45 @@
+{
+  "Files": [
+    {
+      "Id": "/Users/harineepurushothaman/Carnatic/wwwroot/app.css",
+      "PackagePath": "staticwebassets/app.css"
+    },
+    {
+      "Id": "/Users/harineepurushothaman/Carnatic/wwwroot/bootstrap/bootstrap.min.css",
+      "PackagePath": "staticwebassets/bootstrap/bootstrap.min.css"
+    },
+    {
+      "Id": "/Users/harineepurushothaman/Carnatic/wwwroot/bootstrap/bootstrap.min.css.map",
+      "PackagePath": "staticwebassets/bootstrap/bootstrap.min.css.map"
+    },
+    {
+      "Id": "/Users/harineepurushothaman/Carnatic/wwwroot/css/app.css",
+      "PackagePath": "staticwebassets/css/app.css"
+    },
+    {
+      "Id": "/Users/harineepurushothaman/Carnatic/wwwroot/favicon.png",
+      "PackagePath": "staticwebassets/favicon.png"
+    },
+    {
+      "Id": "/Users/harineepurushothaman/Carnatic/wwwroot/js/audioInterop.js",
+      "PackagePath": "staticwebassets/js/audioInterop.js"
+    },
+    {
+      "Id": "obj/Debug/net8.0/staticwebassets/msbuild.Carnatic.Microsoft.AspNetCore.StaticWebAssets.props",
+      "PackagePath": "build\\Microsoft.AspNetCore.StaticWebAssets.props"
+    },
+    {
+      "Id": "obj/Debug/net8.0/staticwebassets/msbuild.build.Carnatic.props",
+      "PackagePath": "build\\Carnatic.props"
+    },
+    {
+      "Id": "obj/Debug/net8.0/staticwebassets/msbuild.buildMultiTargeting.Carnatic.props",
+      "PackagePath": "buildMultiTargeting\\Carnatic.props"
+    },
+    {
+      "Id": "obj/Debug/net8.0/staticwebassets/msbuild.buildTransitive.Carnatic.props",
+      "PackagePath": "buildTransitive\\Carnatic.props"
+    }
+  ],
+  "ElementsToRemove": []
+}
