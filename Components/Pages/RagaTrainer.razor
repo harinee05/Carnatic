@@ -447,7 +447,8 @@
             freqs.Add(CarnaticCatalog.GetSwaraFrequency(swara, selectedShruti.SaFrequencyHz));
         }
 
-        await JSRuntime.InvokeVoidAsync("AudioInterop.playReferenceTone", freqs, 0.8);
+        double duration = 60.0 / bpm;
+        await JSRuntime.InvokeVoidAsync("AudioInterop.playReferenceTone", freqs, duration);
     }
 
     private void ResetStats()

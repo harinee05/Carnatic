@@ -682,6 +682,16 @@ window.AudioInterop = {
             jivariFilter.Q.value = 6;
         };
 
+        const noiseNode = ctx.createBufferSource();
+        const bufferSize = ctx.sampleRate * 0.05;
+        const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+        noiseNode.buffer = noiseBuffer;
+        const noiseGain = ctx.createGain();
+        noiseGain.gain.value = 0;
+
+        // Animate jivari
         const jivariInterval = setInterval(bloomCycle, 20);
 
         // Individual string gain
@@ -690,10 +700,21 @@ window.AudioInterop = {
 
         // Connection path
         osc.connect(harmonicLfo);
+        noiseNode.connect(noiseGain);
+        noiseGain.connect(harmonicLfo);
+
         harmonicLfo.connect(feedbackGain);
         feedbackGain.connect(harmonicLfo); // Feedback loop for resonance
         feedbackGain.connect(jivariFilter);
-        jivariFilter.connect(stringGain);
+
+        // Add a bit of warmth
+        const lowShelf = ctx.createBiquadFilter();
+        lowShelf.type = 'lowshelf';
+        lowShelf.frequency.value = 400;
+        lowShelf.gain.value = 6;
+
+        jivariFilter.connect(lowShelf);
+        lowShelf.connect(stringGain);
         stringGain.connect(this.shrutiGainNode);
 
         return {
@@ -702,10 +723,22 @@ window.AudioInterop = {
             interval: jivariInterval,
             start: (delay) => {
                 try {
-                    osc.start(ctx.currentTime + delay);
+                    const startTime = ctx.currentTime + delay;
+                    osc.start(startTime);
+                    noiseNode.start(startTime);
+
+                    // Noise burst for pluck
+                    noiseGain.gain.setValueAtTime(0.3, startTime);
+                    noiseGain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.05);
+
                     // Fade in the string volume slightly
-                    stringGain.gain.setValueAtTime(0, ctx.currentTime + delay);
-                    stringGain.gain.linearRampToValueAtTime(str.vol, ctx.currentTime + delay + 0.1);
+                    stringGain.gain.setValueAtTime(0, startTime);
+                    stringGain.gain.linearRampToValueAtTime(str.vol, startTime + 0.1);
+
+                    // Subtle random detune for organic feel
+                    setInterval(() => {
+                        if (osc) osc.detune.linearRampToValueAtTime((Math.random() - 0.5) * 8, ctx.currentTime + 0.5);
+                    }, 1000);
                 } catch (e) { }
             },
             stop: () => {
@@ -714,6 +747,7 @@ window.AudioInterop = {
                     // Fade out to avoid clicks
                     stringGain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.1);
                     osc.stop(ctx.currentTime + 0.2);
+                    noiseNode.stop(ctx.currentTime + 0.2);
                 } catch (e) { }
             }
         };
@@ -778,25 +812,26 @@ window.AudioInterop = {
     },
 
     /** Play a single metronome click */
-    playMetronomeClick: function (beatNumber) {
-        if (!this.metronomeCtx) return;
+    playMetronomeClick: function (beatNumber, ctx, atTime) {
+        const audioCtx = ctx || this.metronomeCtx;
+        if (!audioCtx) return;
 
-        const ctx = this.metronomeCtx;
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
+        const time = atTime || audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
 
-        osc.type = beatNumber === 1 ? 'square' : 'square';
+        osc.type = 'square';
         osc.frequency.value = beatNumber === 1 ? 1200 : 1000;
 
-        gain.gain.setValueAtTime(0.001, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.01);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.001, time);
+        gain.gain.exponentialRampToValueAtTime(0.2, time + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
 
         osc.connect(gain);
-        gain.connect(ctx.destination);
+        gain.connect(audioCtx.destination);
 
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.1);
+        osc.start(time);
+        osc.stop(time + 0.1);
     },
 
     /** Stop metronome */
@@ -850,6 +885,9 @@ window.AudioInterop = {
             osc.start(ctx.currentTime + i * durationPerNote);
             osc.stop(ctx.currentTime + (i + 1) * durationPerNote);
             this.referenceOscillators.push(osc);
+
+            // Play metronome click along with reference note
+            this.playMetronomeClick(1, ctx, ctx.currentTime + i * durationPerNote);
 
             for (let t = 0; t < durationPerNote * 1000; t += 50) {
                 this.referencePitchHistory.push({
