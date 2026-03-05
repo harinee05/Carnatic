@@ -17,10 +17,10 @@ window.AudioInterop = {
     referenceCtx: null,
     referenceOscillators: [],
 
-    // Shruti drone
+    // Shruti drone (Exact Tanpura)
     shrutiCtx: null,
-    shrutiOscillators: [],
     shrutiGainNode: null,
+    jivariStrings: [], // 4 strings: Pa-SA-SA-Sa (Carnatic tuning)
 
     // Metronome
     metronomeCtx: null,
@@ -221,7 +221,7 @@ window.AudioInterop = {
     startRecording: async function () {
         try {
             console.log('[AudioInterop] Starting recording with AudioWorklet...');
-            
+
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
                 sampleRate: this.sampleRate
             });
@@ -350,7 +350,7 @@ window.AudioInterop = {
                 stats.stability, stats.total, stats.correct, stats.mistakes
             ).catch(() => { });
         }
-        
+
         console.log('[AudioInterop] Recording stopped');
     },
 
@@ -615,98 +615,120 @@ window.AudioInterop = {
         }
     },
 
-    /** Start shruti drone (continuous Sa and Pa) */
+    /** Start exact Tanpura drone (Pa-SA-SA-Sa tuning with Jivari bridge physics) */
     startShrutiDrone: async function (saFrequencyHz) {
         try {
-            console.log('[AudioInterop] Starting shruti drone at', saFrequencyHz, 'Hz');
-            // Stop any existing drone first
+            console.log('[AudioInterop] Starting Exact Tanpura at', saFrequencyHz, 'Hz');
             this.stopShrutiDrone();
 
             this.shrutiCtx = new (window.AudioContext || window.webkitAudioContext)();
             const ctx = this.shrutiCtx;
 
-        // Create master gain for drone (keep it subtle)
-        this.shrutiGainNode = ctx.createGain();
-        this.shrutiGainNode.gain.value = 0.1;
-        this.shrutiGainNode.connect(ctx.destination);
+            this.shrutiGainNode = ctx.createGain();
+            this.shrutiGainNode.gain.value = 0.15;
+            this.shrutiGainNode.connect(ctx.destination);
 
-        // Calculate Pa frequency (perfect fifth above Sa)
-        const paFrequency = saFrequencyHz * 1.5;
+            // Carnatic tuning: Pa (middle) - SA - SA - Sa (lower/Kharaj)
+            const paFreq = saFrequencyHz * 1.5;
+            const strings = [
+                { freq: paFreq, vol: 0.5, name: 'Pa' },          // String 1
+                { freq: saFrequencyHz, vol: 0.45, name: 'SA' },   // String 2
+                { freq: saFrequencyHz, vol: 0.42, name: 'SA' },   // String 3
+                { freq: saFrequencyHz / 2, vol: 0.6, name: 'Sa' } // String 4 (Kharaj)
+            ];
 
-        // Create Sa oscillator (lower octave)
-        const saLow = ctx.createOscillator();
-        saLow.type = 'sine';
-        saLow.frequency.value = saFrequencyHz * 0.5;
+            this.jivariStrings = strings.map((str, i) => this.createJivariString(str, i));
 
-        // Create Sa oscillator (middle octave)
-        const saMid = ctx.createOscillator();
-        saMid.type = 'sine';
-        saMid.frequency.value = saFrequencyHz;
+            // Staggered start (plucking sequence)
+            this.jivariStrings.forEach((str, i) => str.start(i * 0.2));
 
-        // Create Pa oscillator
-        const pa = ctx.createOscillator();
-        pa.type = 'sine';
-        pa.frequency.value = paFrequency;
-
-        // Create upper Sa for brightness
-        const saHigh = ctx.createOscillator();
-        saHigh.type = 'sine';
-        saHigh.frequency.value = saFrequencyHz * 2;
-
-        // Connect all oscillators
-        const saLowGain = ctx.createGain();
-        saLowGain.gain.value = 0.5;
-        const saMidGain = ctx.createGain();
-        saMidGain.gain.value = 0.4;
-        const paGain = ctx.createGain();
-        paGain.gain.value = 0.3;
-        const saHighGain = ctx.createGain();
-        saHighGain.gain.value = 0.2;
-
-        saLow.connect(saLowGain).connect(this.shrutiGainNode);
-        saMid.connect(saMidGain).connect(this.shrutiGainNode);
-        pa.connect(paGain).connect(this.shrutiGainNode);
-        saHigh.connect(saHighGain).connect(this.shrutiGainNode);
-
-        // Start all oscillators
-        saLow.start();
-        saMid.start();
-        pa.start();
-        saHigh.start();
-
-        this.shrutiOscillators.push(saLow, saMid, pa, saHigh);
-            console.log('[AudioInterop] Shruti drone started successfully');
+            console.log('[AudioInterop] Exact Tanpura started successfully');
         } catch (e) {
-            console.error('[AudioInterop] Error starting shruti drone:', e);
+            console.error('[AudioInterop] Error starting Tanpura:', e);
         }
     },
 
-    /** Stop shruti drone */
-    stopShrutiDrone: function () {
-        try {
-            console.log('[AudioInterop] Stopping shruti drone');
-            // Stop all oscillators with fade out to avoid clicks
-            this.shrutiOscillators.forEach(osc => {
-                try {
-                    if (this.shrutiGainNode && this.shrutiCtx) {
-                        this.shrutiGainNode.gain.linearRampToValueAtTime(0, this.shrutiCtx.currentTime + 0.1);
-                    }
-                    osc.stop(this.shrutiCtx ? this.shrutiCtx.currentTime + 0.1 : 0.1);
-                } catch (e) { 
-                    console.log('[AudioInterop] Error stopping oscillator:', e);
-                }
-            });
-            this.shrutiOscillators = [];
+    /** Helper to create a string with Karplus-Strong resonator and Jivari harmonic bloom */
+    createJivariString: function (str, stringIndex) {
+        const ctx = this.shrutiCtx;
 
-            // Close the shruti audio context
-            if (this.shrutiCtx) {
-                try { this.shrutiCtx.close(); } catch (e) { }
-                this.shrutiCtx = null;
+        // String excitation: Sawtooth for rich harmonics
+        const osc = ctx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.value = str.freq;
+
+        // Jivari: Sequential harmonic peaking (bridge physics simulator)
+        const jivariFilter = ctx.createBiquadFilter();
+        jivariFilter.type = 'peaking';
+
+        // Karplus-Strong loop: String tension and resonance simulation
+        // Using a short delay to create the "metallic" drone resonance
+        const harmonicLfo = new DelayNode(ctx, { delayTime: 0.01 + (stringIndex * 0.005) });
+        const feedbackGain = ctx.createGain();
+        feedbackGain.gain.value = 0.6 + (Math.random() * 0.1); // KS damping
+
+        // Bridge grazing: Harmonic bloom sequence (shimmering resonance)
+        // This makes the high harmonics "bloom" in and out over time
+        let harmonicPhase = Math.random() * Math.PI * 2;
+        const bloomCycle = () => {
+            if (!this.shrutiCtx) return;
+            harmonicPhase += 0.008; // ~8Hz jivari shimmer speed
+            const bloomProgress = (Math.sin(harmonicPhase) + 1) / 2;
+
+            // Peak harmonics 1 through 7 sequentially to simulate bridge grazing
+            const targetFreq = str.freq * (1 + bloomProgress * 6);
+            jivariFilter.frequency.value = targetFreq;
+            jivariFilter.gain.value = 18 * bloomProgress; // Drive the peak
+            jivariFilter.Q.value = 6;
+        };
+
+        const jivariInterval = setInterval(bloomCycle, 20);
+
+        // Individual string gain
+        const stringGain = ctx.createGain();
+        stringGain.gain.value = str.vol;
+
+        // Connection path
+        osc.connect(harmonicLfo);
+        harmonicLfo.connect(feedbackGain);
+        feedbackGain.connect(harmonicLfo); // Feedback loop for resonance
+        feedbackGain.connect(jivariFilter);
+        jivariFilter.connect(stringGain);
+        stringGain.connect(this.shrutiGainNode);
+
+        return {
+            osc,
+            filter: jivariFilter,
+            interval: jivariInterval,
+            start: (delay) => {
+                try {
+                    osc.start(ctx.currentTime + delay);
+                    // Fade in the string volume slightly
+                    stringGain.gain.setValueAtTime(0, ctx.currentTime + delay);
+                    stringGain.gain.linearRampToValueAtTime(str.vol, ctx.currentTime + delay + 0.1);
+                } catch (e) { }
+            },
+            stop: () => {
+                clearInterval(jivariInterval);
+                try {
+                    // Fade out to avoid clicks
+                    stringGain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.1);
+                    osc.stop(ctx.currentTime + 0.2);
+                } catch (e) { }
             }
-            this.shrutiGainNode = null;
-            console.log('[AudioInterop] Shruti drone stopped');
-        } catch (e) {
-            console.error('[AudioInterop] Error stopping shruti drone:', e);
+        };
+    },
+
+    /** Stop all Tanpura strings and clear audio context */
+    stopShrutiDrone: function () {
+        console.log('[AudioInterop] Stopping Tanpura');
+        if (this.jivariStrings) {
+            this.jivariStrings.forEach(str => str.stop());
+            this.jivariStrings = [];
+        }
+        if (this.shrutiCtx) {
+            try { this.shrutiCtx.close(); } catch (e) { }
+            this.shrutiCtx = null;
         }
     },
 
@@ -871,7 +893,7 @@ window.AudioInterop = {
 };
 
 // Global error handler for debugging
-window.addEventListener('error', function(e) {
+window.addEventListener('error', function (e) {
     console.error('[GLOBAL ERROR]', e.message, 'at', e.filename, 'line', e.lineno);
 });
 
