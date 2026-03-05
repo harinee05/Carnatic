@@ -161,8 +161,8 @@
             </div>
         </div>
         <div class="stat-card">
-            <div class="stat-value stat-notes">@totalNotesDetected</div>
-            <div class="stat-label">Notes Detected</div>
+            <div class="stat-value stat-notes">@musicalNoteCount</div>
+            <div class="stat-label">Musical Notes</div>
         </div>
         <div class="stat-card">
             <div class="stat-value stat-correct">@correctNotes</div>
@@ -195,7 +195,13 @@
 
     // Stats
     private double stabilityScore = 0;
-    private int totalNotesDetected = 0;
+    // Musical note segmentation
+    private int totalNotesDetected = 0; // Raw frames (for stability)
+    private int musicalNoteCount = 0;    // Real musical notes
+    private string? lastConfirmedSwara = null;
+    private int swaraPersistenceCount = 0;
+    private const int SwaraDebounceThreshold = 3; // Number of consistent frames needed
+
     private int correctNotes = 0;
     private int mistakeCount = 0;
 
@@ -328,6 +334,7 @@
     public async Task OnPitchResult(double timeMs, double frequencyHz,
                                      double centDeviation, bool isInRaga, string swaraName)
     {
+        // 1. Raw frame analysis for Stability Score
         totalNotesDetected++;
         if (isInRaga) correctNotes++;
         else mistakeCount++;
@@ -335,6 +342,31 @@
         if (totalNotesDetected > 0)
         {
             stabilityScore = Math.Round((double)correctNotes / totalNotesDetected * 100, 1);
+        }
+
+        // 2. Musical Note Segmentation (Debounced)
+        if (!string.IsNullOrEmpty(swaraName))
+        {
+            if (swaraName == lastConfirmedSwara)
+            {
+                swaraPersistenceCount = 0; // Reset debounce if we are still on the same note
+            }
+            else
+            {
+                swaraPersistenceCount++;
+                if (swaraPersistenceCount >= SwaraDebounceThreshold)
+                {
+                    musicalNoteCount++;
+                    lastConfirmedSwara = swaraName;
+                    swaraPersistenceCount = 0;
+                }
+            }
+        }
+        else
+        {
+            // Silence detected
+            swaraPersistenceCount = 0;
+            lastConfirmedSwara = null;
         }
 
         // Update UI every 5 results to avoid excessive re-renders
@@ -455,8 +487,11 @@
     {
         stabilityScore = 0;
         totalNotesDetected = 0;
+        musicalNoteCount = 0;
         correctNotes = 0;
         mistakeCount = 0;
+        lastConfirmedSwara = null;
+        swaraPersistenceCount = 0;
     }
 
     private string GetSwaraDisplayName(Swara swara) => swara switch
