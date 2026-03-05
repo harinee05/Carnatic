@@ -645,20 +645,28 @@ window.AudioInterop = {
             for (let i = 0; i < data.length; i++) {
                 let sample = 0;
                 const t = i / 44100;
-                const bloom = (Math.sin(t * 0.8) + 1) / 2; // 0.4Hz harmonic cycle
 
-                strings.forEach(str => {
-                    // Fundamental decays, harmonics bloom sequentially (the Jivari effect)
-                    const fund = Math.sin(t * str.freq * 2 * Math.PI + str.phase) * (1 - bloom * 0.7);
-                    const h2 = Math.sin(t * str.freq * 4 * Math.PI) * bloom * 0.6;
-                    const h3 = Math.sin(t * str.freq * 6 * Math.PI) * bloom * 0.4;
-                    const h5 = Math.sin(t * str.freq * 10 * Math.PI) * bloom * 0.2;
+                strings.forEach((str, idx) => {
+                    // Stagger the plucks: Pa(0s), SA(1s), SA(2s), Sa(3s)
+                    const pluckOffset = idx;
+                    let stringTime = t - pluckOffset;
+                    if (stringTime < 0) stringTime += 4; // Seamless wrap
 
-                    sample += (fund + h2 + h3 + h5) * str.vol * 0.25;
+                    // Individual string envelope (exponential decay)
+                    const env = Math.pow(0.4, stringTime * 0.9);
+
+                    // Each string has a slightly offset bloom phase
+                    const bloom = (Math.sin(t * 0.8 + idx) + 1) / 2;
+
+                    const fund = Math.sin(t * str.freq * 2 * Math.PI + str.phase) * (1 - bloom * 0.6);
+                    const h2 = Math.sin(t * str.freq * 4 * Math.PI) * bloom * 0.5;
+                    const h3 = Math.sin(t * str.freq * 6 * Math.PI) * bloom * 0.3;
+                    const h5 = Math.sin(t * str.freq * 10 * Math.PI) * bloom * 0.15;
+
+                    sample += (fund + h2 + h3 + h5) * str.vol * env * 0.25;
                 });
 
-                // String damping/envelope (4s loop cycle damping)
-                data[i] = sample * Math.pow(0.98, (i % 44100) / 1000);
+                data[i] = sample;
             }
 
             // Loop forever
