@@ -109,7 +109,8 @@ body {
 
 /* ---- Controls Panel ---- */
 .controls-panel {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 16px;
     align-items: flex-end;
     padding: 20px 24px;
@@ -228,6 +229,98 @@ body {
 .btn-reference:hover:not(:disabled) {
     transform: translateY(-1px);
     box-shadow: 0 6px 20px rgba(21, 101, 192, 0.4);
+}
+
+.btn-drone-on {
+    background: linear-gradient(135deg, #ff9800, #ffb74d);
+    color: white;
+    box-shadow: 0 4px 15px rgba(255, 152, 0, 0.3);
+}
+
+.btn-drone-on:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(255, 152, 0, 0.4);
+}
+
+.btn-drone-off {
+    background: linear-gradient(135deg, #424242, #616161);
+    color: white;
+}
+
+.btn-drone-off:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(82, 82, 82, 0.4);
+}
+
+.btn-metronome-on {
+    background: linear-gradient(135deg, #00897b, #26a69a);
+    color: white;
+    box-shadow: 0 4px 15px rgba(0, 137, 123, 0.3);
+    animation: metronome-pulse 0.5s infinite;
+}
+
+.btn-metronome-on:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(0, 137, 123, 0.4);
+}
+
+.btn-metronome-off {
+    background: linear-gradient(135deg, #424242, #616161);
+    color: white;
+}
+
+.btn-metronome-off:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(82, 82, 82, 0.4);
+}
+
+@keyframes metronome-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(0, 137, 123, 0.4); }
+    50% { box-shadow: 0 0 0 8px rgba(0, 137, 123, 0); }
+}
+
+.metronome-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.bpm-input {
+    width: 60px;
+    padding: 8px 6px;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: 'Outfit', monospace;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-align: center;
+    transition: all 0.2s ease;
+}
+
+.bpm-input:hover:not(:disabled) {
+    border-color: var(--border-accent);
+}
+
+.bpm-input:focus:not(:disabled) {
+    outline: none;
+    border-color: var(--accent-gold);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.bpm-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.bpm-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    min-width: 32px;
 }
 
 /* ---- Raga Info Card ---- */
@@ -541,4 +634,49 @@ body {
 
 .invalid {
     outline: none;
+}
+
+/* Error Toast */
+.error-toast {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: linear-gradient(135deg, #d50000, #ff1744);
+    color: white;
+    padding: 16px 20px;
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 30px rgba(213, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    z-index: 9999;
+    max-width: 400px;
+    animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.error-dismiss {
+    background: rgba(255, 255, 255, 0.2);
+    border: none;
+    color: white;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.85rem;
+    transition: background 0.2s;
+}
+
+.error-dismiss:hover {
+    background: rgba(255, 255, 255, 0.3);
 }

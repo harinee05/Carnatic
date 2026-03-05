@@ -4,7 +4,16 @@
 @inject IJSRuntime JSRuntime
 @implements IAsyncDisposable
 
+
 <PageTitle>Carnatic Raga Trainer</PageTitle>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="error-toast">
+        <strong>Error:</strong> @errorMessage
+        <button @onclick="ClearError" class="error-dismiss">Dismiss</button>
+    </div>
+}
 
 <div class="app-container">
     <!-- Header -->
@@ -40,6 +49,40 @@
                     <option value="@shruti.Name">@shruti.DisplayName</option>
                 }
             </select>
+        </div>
+
+        <div class="control-group">
+            <label class="control-label">
+                <span class="label-icon">🎵</span> Shruti Drone
+            </label>
+            <button class="btn @(isShrutiPlaying ? "btn-drone-on" : "btn-drone-off")"
+                    @onclick="ToggleShruti"
+                    disabled="@(!isInitialized)">
+                <span class="btn-icon">@(isShrutiPlaying ? "🔊" : "🔇")</span>
+                @(isShrutiPlaying ? "On" : "Off")
+            </button>
+        </div>
+
+        <div class="control-group">
+            <label class="control-label">
+                <span class="label-icon">🥁</span> Metronome
+            </label>
+            <div class="metronome-controls">
+                <button class="btn @(isMetronomePlaying ? "btn-metronome-on" : "btn-metronome-off")"
+                        @onclick="ToggleMetronome"
+                        disabled="@(!isInitialized)">
+                    <span class="btn-icon">@(isMetronomePlaying ? "▶" : "⏸")</span>
+                    @(isMetronomePlaying ? "On" : "Off")
+                </button>
+                <input type="number" 
+                       class="bpm-input" 
+                       @bind="bpm" 
+                       @oninput="OnBpmInput"
+                       min="30" 
+                       max="240"
+                       disabled="@(!isMetronomePlaying)" />
+                <span class="bpm-label">BPM</span>
+            </div>
         </div>
 
         <div class="control-group control-actions">
@@ -136,6 +179,10 @@
     // State
     private bool isInitialized = false;
     private bool isRecording = false;
+    private bool isShrutiPlaying = false;
+    private bool isMetronomePlaying = false;
+    private int bpm = 60;
+    private string? errorMessage = null;
     private DotNetObjectReference<RagaTrainer>? dotNetRef;
 
     // Music theory
@@ -152,19 +199,37 @@
     private int correctNotes = 0;
     private int mistakeCount = 0;
 
+    private void ClearError() => errorMessage = null;
+
+    private void LogError(string message)
+    {
+        errorMessage = message;
+        Console.WriteLine($"[ERROR] {message}");
+    }
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
-            dotNetRef = DotNetObjectReference.Create(this);
-            await JSRuntime.InvokeVoidAsync("AudioInterop.initialize", dotNetRef, "pitchCanvas");
+            try
+            {
+                Console.WriteLine("[RagaTrainer] Initializing audio...");
+                dotNetRef = DotNetObjectReference.Create(this);
+                await JSRuntime.InvokeVoidAsync("AudioInterop.initialize", dotNetRef, "pitchCanvas");
 
-            selectedRaga = ragas.FirstOrDefault(r => r.Name == selectedRagaName);
-            selectedShruti = shrutis.FirstOrDefault(s => s.Name == selectedShrutiName);
+                selectedRaga = ragas.FirstOrDefault(r => r.Name == selectedRagaName);
+                selectedShruti = shrutis.FirstOrDefault(s => s.Name == selectedShrutiName);
 
-            await UpdateSwaraConfig();
-            isInitialized = true;
-            StateHasChanged();
+                await UpdateSwaraConfig();
+                isInitialized = true;
+                Console.WriteLine("[RagaTrainer] Initialization complete");
+                StateHasChanged();
+            }
+            catch (Exception ex)
+            {
+                LogError($"Initialization failed: {ex.Message}");
+                Console.WriteLine($"[RagaTrainer] Init error: {ex}");
+            }
         }
     }
 
@@ -179,8 +244,14 @@
     {
         selectedShruti = shrutis.FirstOrDefault(s => s.Name == selectedShrutiName);
 
-        // Stop any playing reference before changing shruti
+        // Stop any playing reference and shruti before changing shruti
         await JSRuntime.InvokeVoidAsync("AudioInterop.stopReference");
+        
+        if (isShrutiPlaying)
+        {
+            await JSRuntime.InvokeVoidAsync("AudioInterop.stopShrutiDrone");
+            isShrutiPlaying = false;
+        }
 
         await UpdateSwaraConfig();
         ResetStats();
@@ -287,6 +358,80 @@
         await InvokeAsync(StateHasChanged);
     }
 
+    private async Task ToggleShruti()
+    {
+        try
+        {
+            if (isShrutiPlaying)
+            {
+                isShrutiPlaying = false;
+                await JSRuntime.InvokeVoidAsync("AudioInterop.stopShrutiDrone");
+            }
+            else
+            {
+                isShrutiPlaying = true;
+                if (selectedShruti != null)
+                {
+                    await JSRuntime.InvokeVoidAsync("AudioInterop.startShrutiDrone", selectedShruti.SaFrequencyHz);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error toggling shruti: {ex.Message}");
+            isShrutiPlaying = false;
+        }
+    }
+
+    private async Task ToggleMetronome()
+    {
+        try
+        {
+            if (isMetronomePlaying)
+            {
+                isMetronomePlaying = false;
+                await JSRuntime.InvokeVoidAsync("AudioInterop.stopMetronome");
+            }
+            else
+            {
+                isMetronomePlaying = true;
+                await JSRuntime.InvokeVoidAsync("AudioInterop.startMetronome", bpm);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error toggling metronome: {ex.Message}");
+            isMetronomePlaying = false;
+        }
+    }
+
+    private async Task OnBpmChanged()
+    {
+        if (bpm < 30) bpm = 30;
+        if (bpm > 240) bpm = 240;
+        
+        if (isMetronomePlaying)
+        {
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("AudioInterop.setMetronomeBpm", bpm);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error setting BPM: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task OnBpmInput(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int newBpm))
+        {
+            bpm = newBpm;
+            await OnBpmChanged();
+        }
+    }
+
     private async Task PlayReference()
     {
         if (selectedRaga == null || selectedShruti == null) return;
@@ -354,6 +499,8 @@
     {
         try
         {
+            await JSRuntime.InvokeVoidAsync("AudioInterop.stopShrutiDrone");
+            await JSRuntime.InvokeVoidAsync("AudioInterop.stopMetronome");
             await JSRuntime.InvokeVoidAsync("AudioInterop.dispose");
         }
         catch (JSDisconnectedException)
