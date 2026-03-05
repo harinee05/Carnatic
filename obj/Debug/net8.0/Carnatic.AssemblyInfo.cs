@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Carnatic")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+81994e7754acedccecc6fb9127186b3881ce5fd0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+fdb1ce4b64348bdea76fd77b9d80fabb86512a87")]
 [assembly: System.Reflection.AssemblyProductAttribute("Carnatic")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Carnatic")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
