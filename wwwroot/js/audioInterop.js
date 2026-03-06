@@ -790,9 +790,16 @@ window.AudioInterop = {
         // Stop any previous reference playback first!
         this.stopReference();
 
-        this.referenceCtx = new (window.AudioContext || window.webkitAudioContext)();
+        this.referenceCtx = new (window.AudioContext || window.webkitAudioContext)({
+            latencyHint: 'interactive',
+            sampleRate: this.sampleRate
+        });
         const ctx = this.referenceCtx;
         this.referenceOscillators = [];
+
+        // Catch the exact start time to sync visualization
+        const audioStartTime = ctx.currentTime + 0.05; // 50ms buffer for scheduling
+        this.startTime = Date.now() + 50;
 
         // Generate reference pitch data
         this.referencePitchHistory = [];
@@ -802,24 +809,27 @@ window.AudioInterop = {
             const freq = swaraFrequencies[i];
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
+            const onset = audioStartTime + i * durationPerNote;
 
             osc.type = 'sine';
             osc.frequency.value = freq;
 
-            gain.gain.setValueAtTime(0, ctx.currentTime + i * durationPerNote);
-            gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + i * durationPerNote + 0.05);
-            gain.gain.setValueAtTime(0.3, ctx.currentTime + (i + 1) * durationPerNote - 0.05);
-            gain.gain.linearRampToValueAtTime(0, ctx.currentTime + (i + 1) * durationPerNote);
+            gain.gain.setValueAtTime(0, onset);
+            gain.gain.linearRampToValueAtTime(0.3, onset + 0.05);
+            gain.gain.setValueAtTime(0.3, onset + durationPerNote - 0.05);
+            gain.gain.linearRampToValueAtTime(0, onset + durationPerNote);
 
             osc.connect(gain);
             gain.connect(ctx.destination);
 
-            osc.start(ctx.currentTime + i * durationPerNote);
-            osc.stop(ctx.currentTime + (i + 1) * durationPerNote);
+            osc.start(onset);
+            osc.stop(onset + durationPerNote);
             this.referenceOscillators.push(osc);
 
-            // Play metronome click along with reference note
-            this.playMetronomeClick(1, ctx, ctx.currentTime + i * durationPerNote);
+            // Only play metronome click if it was ALREADY on
+            if (this.metronomeIntervalId) {
+                this.playMetronomeClick(1, ctx, onset);
+            }
 
             for (let t = 0; t < durationPerNote * 1000; t += 50) {
                 this.referencePitchHistory.push({
@@ -835,7 +845,6 @@ window.AudioInterop = {
 
         // Animate
         this.pitchHistory = [];
-        this.startTime = Date.now();
         this.isRecording = true;
 
         const totalDuration = swaraFrequencies.length * durationPerNote;
