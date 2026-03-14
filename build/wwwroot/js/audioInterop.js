@@ -17,10 +17,11 @@ window.AudioInterop = {
     referenceCtx: null,
     referenceOscillators: [],
 
-    // Shruti drone
+    // Shruti drone (Real Tanpura Buffer)
     shrutiCtx: null,
-    shrutiOscillators: [],
     shrutiGainNode: null,
+    tanpuraBuffer: null,
+    tanpuraSource: null,
 
     // Metronome
     metronomeCtx: null,
@@ -34,9 +35,7 @@ window.AudioInterop = {
     maxVisibleTimeMs: 10000,
     startTime: 0,
 
-    // AudioWorklet
-    audioWorkletNode: null,
-    workletReady: false,
+    // Legacy ScriptProcessor (more compatible than AudioWorklet)
 
     // YIN pitch detection config
     sampleRate: 44100,
@@ -217,11 +216,11 @@ window.AudioInterop = {
         return { name, centDeviation: minCentDev, isInRaga };
     },
 
-    /** Start recording from microphone using AudioWorklet */
+    /** Start recording from microphone using ScriptProcessorNode (more compatible) */
     startRecording: async function () {
         try {
-            console.log('[AudioInterop] Starting recording with AudioWorklet...');
-            
+            console.log('[AudioInterop] Starting recording...');
+
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
                 sampleRate: this.sampleRate
             });
@@ -236,37 +235,56 @@ window.AudioInterop = {
 
             const source = this.audioContext.createMediaStreamSource(this.mediaStream);
 
-            // Load the AudioWorklet
-            try {
-                await this.audioContext.audioWorklet.addModule('js/pitchWorklet.js');
-                console.log('[AudioInterop] AudioWorklet loaded successfully');
-            } catch (workletError) {
-                console.error('[AudioInterop] Failed to load worklet:', workletError);
-                throw new Error('AudioWorklet not supported');
-            }
-
-            // Create the AudioWorkletNode
-            this.audioWorkletNode = new AudioWorkletNode(this.audioContext, 'pitch-processor');
-
-            // Handle messages from the worklet
-            this.audioWorkletNode.port.onmessage = (event) => {
-                if (event.data.type === 'pitchResult') {
-                    this.handlePitchResult(event.data);
-                }
-            };
+            const bufferSize = 2048;
+            this.processorNode = this.audioContext.createScriptProcessor(bufferSize, 1, 1);
 
             this.pitchHistory = [];
             this.startTime = Date.now();
             this.isRecording = true;
 
-            // Send start time to worklet
-            this.audioWorkletNode.port.postMessage({
-                type: 'setStartTime',
-                time: this.startTime
-            });
+            this.processorNode.onaudioprocess = (event) => {
+                if (!this.isRecording) return;
 
-            source.connect(this.audioWorkletNode);
-            this.audioWorkletNode.connect(this.audioContext.destination);
+                const inputData = event.inputBuffer.getChannelData(0);
+                const timeMs = Date.now() - this.startTime;
+
+                const result = this.detectPitch(inputData);
+
+                if (result.frequency > 0 && result.confidence > 0.5) {
+                    const swaraResult = this.findNearestSwara(result.frequency);
+
+                    this.pitchHistory.push({
+                        timeMs,
+                        frequencyHz: result.frequency,
+                        centDeviation: swaraResult.centDeviation,
+                        isInRaga: swaraResult.isInRaga,
+                        swaraName: swaraResult.name,
+                        confidence: result.confidence
+                    });
+
+                    if (this.dotNetRef && this.pitchHistory.length % 5 === 0) {
+                        this.dotNetRef.invokeMethodAsync('OnPitchResult',
+                            timeMs,
+                            result.frequency,
+                            swaraResult.centDeviation,
+                            swaraResult.isInRaga,
+                            swaraResult.name
+                        ).catch(() => { });
+                    }
+                } else {
+                    this.pitchHistory.push({
+                        timeMs,
+                        frequencyHz: 0,
+                        centDeviation: 0,
+                        isInRaga: true,
+                        swaraName: '',
+                        confidence: 0
+                    });
+                }
+            };
+
+            source.connect(this.processorNode);
+            this.processorNode.connect(this.audioContext.destination);
 
             this.startVisualization();
             console.log('[AudioInterop] Recording started successfully');
@@ -277,55 +295,14 @@ window.AudioInterop = {
         }
     },
 
-    /** Handle pitch result from AudioWorklet */
-    handlePitchResult: function (data) {
-        if (!this.isRecording) return;
-
-        const { timeMs, frequency, confidence } = data;
-
-        if (frequency > 0 && confidence > 0.5) {
-            const swaraResult = this.findNearestSwara(frequency);
-
-            this.pitchHistory.push({
-                timeMs,
-                frequencyHz: frequency,
-                centDeviation: swaraResult.centDeviation,
-                isInRaga: swaraResult.isInRaga,
-                swaraName: swaraResult.name,
-                confidence: confidence
-            });
-
-            // Send only the small analyzed result to .NET (for stats)
-            if (this.dotNetRef && this.pitchHistory.length % 5 === 0) {
-                this.dotNetRef.invokeMethodAsync('OnPitchResult',
-                    timeMs,
-                    frequency,
-                    swaraResult.centDeviation,
-                    swaraResult.isInRaga,
-                    swaraResult.name
-                ).catch(() => { /* circuit may be disconnected */ });
-            }
-        } else {
-            // Silence — still log for timeline continuity
-            this.pitchHistory.push({
-                timeMs,
-                frequencyHz: 0,
-                centDeviation: 0,
-                isInRaga: true,
-                swaraName: '',
-                confidence: 0
-            });
-        }
-    },
-
     /** Stop recording */
     stopRecording: function () {
         this.isRecording = false;
 
-        // Disconnect AudioWorklet
-        if (this.audioWorkletNode) {
-            this.audioWorkletNode.disconnect();
-            this.audioWorkletNode = null;
+        // Disconnect ScriptProcessor
+        if (this.processorNode) {
+            this.processorNode.disconnect();
+            this.processorNode = null;
         }
 
         if (this.mediaStream) {
@@ -350,7 +327,7 @@ window.AudioInterop = {
                 stats.stability, stats.total, stats.correct, stats.mistakes
             ).catch(() => { });
         }
-        
+
         console.log('[AudioInterop] Recording stopped');
     },
 
@@ -615,98 +592,185 @@ window.AudioInterop = {
         }
     },
 
-    /** Start shruti drone (continuous Sa and Pa) */
+    /** Start High-Fidelity Buffer-based Tanpura (Pa-SA-SA-Sa) */
     startShrutiDrone: async function (saFrequencyHz) {
         try {
-            console.log('[AudioInterop] Starting shruti drone at', saFrequencyHz, 'Hz');
-            // Stop any existing drone first
+            console.log('[AudioInterop] Starting Real Tanpura at', saFrequencyHz, 'Hz');
+            
+            // If tanpura is already playing, crossfade to new frequency
+            if (this.tanpuraSource && this.shrutiCtx && !this.shrutiCtx.closed) {
+                console.log('[AudioInterop] Crossfading to new shruti...');
+                await this.crossfadeShruti(saFrequencyHz);
+                return;
+            }
+            
             this.stopShrutiDrone();
 
-            this.shrutiCtx = new (window.AudioContext || window.webkitAudioContext)();
+            this.shrutiCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
             const ctx = this.shrutiCtx;
 
-        // Create master gain for drone (keep it subtle)
-        this.shrutiGainNode = ctx.createGain();
-        this.shrutiGainNode.gain.value = 0.1;
-        this.shrutiGainNode.connect(ctx.destination);
+            this.shrutiGainNode = ctx.createGain();
+            this.shrutiGainNode.gain.value = 0.18;
+            this.shrutiGainNode.connect(ctx.destination);
 
-        // Calculate Pa frequency (perfect fifth above Sa)
-        const paFrequency = saFrequencyHz * 1.5;
+            // Generate 4s tanpura cycle (repeats seamlessly)
+            this.tanpuraBuffer = ctx.createBuffer(1, 44100 * 4, 44100);
+            const data = this.tanpuraBuffer.getChannelData(0);
 
-        // Create Sa oscillator (lower octave)
-        const saLow = ctx.createOscillator();
-        saLow.type = 'sine';
-        saLow.frequency.value = saFrequencyHz * 0.5;
+            // Carnatic tuning: Pa-SA-SA-Sa
+            const strings = [
+                { freq: saFrequencyHz * 1.5, phase: 0, vol: 0.5 },    // Pa
+                { freq: saFrequencyHz, phase: 0.1, vol: 0.45 },      // SA 1
+                { freq: saFrequencyHz, phase: 0.25, vol: 0.42 },     // SA 2
+                { freq: saFrequencyHz * 0.5, phase: 0, vol: 0.6 }    // Sa (Kharaj)
+            ];
 
-        // Create Sa oscillator (middle octave)
-        const saMid = ctx.createOscillator();
-        saMid.type = 'sine';
-        saMid.frequency.value = saFrequencyHz;
+            // Generate REAL jivari bloom using additive synthesis
+            for (let i = 0; i < data.length; i++) {
+                let sample = 0;
+                const t = i / 44100;
 
-        // Create Pa oscillator
-        const pa = ctx.createOscillator();
-        pa.type = 'sine';
-        pa.frequency.value = paFrequency;
+                strings.forEach((str, idx) => {
+                    // Stagger the plucks: Pa(0s), SA(1s), SA(2s), Sa(3s)
+                    const pluckOffset = idx;
+                    let stringTime = t - pluckOffset;
+                    if (stringTime < 0) stringTime += 4; // Seamless wrap
 
-        // Create upper Sa for brightness
-        const saHigh = ctx.createOscillator();
-        saHigh.type = 'sine';
-        saHigh.frequency.value = saFrequencyHz * 2;
+                    // Individual string envelope (exponential decay)
+                    const env = Math.pow(0.4, stringTime * 0.9);
 
-        // Connect all oscillators
-        const saLowGain = ctx.createGain();
-        saLowGain.gain.value = 0.5;
-        const saMidGain = ctx.createGain();
-        saMidGain.gain.value = 0.4;
-        const paGain = ctx.createGain();
-        paGain.gain.value = 0.3;
-        const saHighGain = ctx.createGain();
-        saHighGain.gain.value = 0.2;
+                    // Each string has a slightly offset bloom phase
+                    const bloom = (Math.sin(t * 0.8 + idx) + 1) / 2;
 
-        saLow.connect(saLowGain).connect(this.shrutiGainNode);
-        saMid.connect(saMidGain).connect(this.shrutiGainNode);
-        pa.connect(paGain).connect(this.shrutiGainNode);
-        saHigh.connect(saHighGain).connect(this.shrutiGainNode);
+                    const fund = Math.sin(t * str.freq * 2 * Math.PI + str.phase) * (1 - bloom * 0.6);
+                    const h2 = Math.sin(t * str.freq * 4 * Math.PI) * bloom * 0.5;
+                    const h3 = Math.sin(t * str.freq * 6 * Math.PI) * bloom * 0.3;
+                    const h5 = Math.sin(t * str.freq * 10 * Math.PI) * bloom * 0.15;
 
-        // Start all oscillators
-        saLow.start();
-        saMid.start();
-        pa.start();
-        saHigh.start();
+                    sample += (fund + h2 + h3 + h5) * str.vol * env * 0.25;
+                });
 
-        this.shrutiOscillators.push(saLow, saMid, pa, saHigh);
-            console.log('[AudioInterop] Shruti drone started successfully');
+                data[i] = sample;
+            }
+
+            // Loop forever
+            this.tanpuraSource = ctx.createBufferSource();
+            this.tanpuraSource.buffer = this.tanpuraBuffer;
+            this.tanpuraSource.loop = true;
+            this.tanpuraSource.connect(this.shrutiGainNode);
+            this.tanpuraSource.start();
+
+            console.log('[AudioInterop] Real Tanpura started successfully');
         } catch (e) {
-            console.error('[AudioInterop] Error starting shruti drone:', e);
+            console.error('[AudioInterop] Error starting Tanpura:', e);
         }
     },
 
-    /** Stop shruti drone */
-    stopShrutiDrone: function () {
+    /** Crossfade from current Tanpura to new frequency */
+    crossfadeShruti: async function (saFrequencyHz) {
         try {
-            console.log('[AudioInterop] Stopping shruti drone');
-            // Stop all oscillators with fade out to avoid clicks
-            this.shrutiOscillators.forEach(osc => {
-                try {
-                    if (this.shrutiGainNode && this.shrutiCtx) {
-                        this.shrutiGainNode.gain.linearRampToValueAtTime(0, this.shrutiCtx.currentTime + 0.1);
-                    }
-                    osc.stop(this.shrutiCtx ? this.shrutiCtx.currentTime + 0.1 : 0.1);
-                } catch (e) { 
-                    console.log('[AudioInterop] Error stopping oscillator:', e);
-                }
-            });
-            this.shrutiOscillators = [];
-
-            // Close the shruti audio context
-            if (this.shrutiCtx) {
-                try { this.shrutiCtx.close(); } catch (e) { }
-                this.shrutiCtx = null;
+            console.log('[AudioInterop] Crossfading shruti to:', saFrequencyHz, 'Hz');
+            const ctx = this.shrutiCtx;
+            if (!ctx || ctx.state === 'closed') {
+                console.log('[AudioInterop] Context invalid, doing full restart');
+                await this.stopShrutiDrone();
+                await this.startShrutiDrone(saFrequencyHz);
+                return;
             }
-            this.shrutiGainNode = null;
-            console.log('[AudioInterop] Shruti drone stopped');
+
+            const fadeTime = 0.5; // 500ms crossfade
+            
+            // Fade out current
+            const currentTime = ctx.currentTime;
+            this.shrutiGainNode.gain.linearRampToValueAtTime(0, currentTime + fadeTime);
+            
+            // Stop old source after fade
+            if (this.tanpuraSource) {
+                setTimeout(() => {
+                    try { 
+                        this.tanpuraSource.stop(); 
+                        this.tanpuraSource = null;
+                        this.tanpuraBuffer = null;
+                    } catch (e) { 
+                        console.log('[AudioInterop] Error stopping old tanpura source:', e);
+                    }
+                }, fadeTime * 1000);
+            }
+
+            // Wait for fade out to complete
+            await new Promise(r => setTimeout(r, fadeTime * 1000));
+            
+            // Regenerate buffer with new frequency
+            this.tanpuraBuffer = ctx.createBuffer(1, 44100 * 4, 44100);
+            const data = this.tanpuraBuffer.getChannelData(0);
+
+            const strings = [
+                { freq: saFrequencyHz * 1.5, phase: 0, vol: 0.5 },
+                { freq: saFrequencyHz, phase: 0.1, vol: 0.45 },
+                { freq: saFrequencyHz, phase: 0.25, vol: 0.42 },
+                { freq: saFrequencyHz * 0.5, phase: 0, vol: 0.6 }
+            ];
+
+            for (let i = 0; i < data.length; i++) {
+                let sample = 0;
+                const t = i / 44100;
+
+                strings.forEach((str, idx) => {
+                    const pluckOffset = idx;
+                    let stringTime = t - pluckOffset;
+                    if (stringTime < 0) stringTime += 4; // Seamless wrap
+
+                    // Individual string envelope (exponential decay)
+                    const env = Math.pow(0.4, stringTime * 0.9);
+
+                    // Each string has a slightly offset bloom phase
+                    const bloom = (Math.sin(t * 0.8 + idx) + 1) / 2;
+
+                    const fund = Math.sin(t * str.freq * 2 * Math.PI + str.phase) * (1 - bloom * 0.6);
+                    const h2 = Math.sin(t * str.freq * 4 * Math.PI) * bloom * 0.5;
+                    const h3 = Math.sin(t * str.freq * 6 * Math.PI) * bloom * 0.3;
+                    const h5 = Math.sin(t * str.freq * 10 * Math.PI) * bloom * 0.15;
+
+                    sample += (fund + h2 + h3 + h5) * str.vol * env * 0.25;
+                });
+
+                data[i] = sample;
+            }
+
+            // Start new source with fade in
+            this.tanpuraSource = ctx.createBufferSource();
+            this.tanpuraSource.buffer = this.tanpuraBuffer;
+            this.tanpuraSource.loop = true;
+            this.tanpuraSource.connect(this.shrutiGainNode);
+            
+            // Fade in
+            this.shrutiGainNode.gain.value = 0;
+            this.shrutiGainNode.gain.linearRampToValueAtTime(0.18, ctx.currentTime + fadeTime);
+            
+            this.tanpuraSource.start();
+
+            console.log('[AudioInterop] Crossfaded to new shruti:', saFrequencyHz, 'Hz');
         } catch (e) {
-            console.error('[AudioInterop] Error stopping shruti drone:', e);
+            console.error('[AudioInterop] Error crossfading shruti:', e);
+            // Fallback to stop/start
+            await this.stopShrutiDrone();
+            await this.startShrutiDrone(saFrequencyHz);
+        }
+    },
+
+    /** Stop all Tanpura audio and release buffers */
+    stopShrutiDrone: function () {
+        console.log('[AudioInterop] Stopping Tanpura');
+        if (this.tanpuraSource) {
+            try { this.tanpuraSource.stop(); } catch (e) { }
+            this.tanpuraSource = null;
+        }
+        if (this.tanpuraBuffer) {
+            this.tanpuraBuffer = null;
+        }
+        if (this.shrutiCtx) {
+            try { this.shrutiCtx.close(); } catch (e) { }
+            this.shrutiCtx = null;
         }
     },
 
@@ -756,25 +820,26 @@ window.AudioInterop = {
     },
 
     /** Play a single metronome click */
-    playMetronomeClick: function (beatNumber) {
-        if (!this.metronomeCtx) return;
+    playMetronomeClick: function (beatNumber, ctx, atTime) {
+        const audioCtx = ctx || this.metronomeCtx;
+        if (!audioCtx) return;
 
-        const ctx = this.metronomeCtx;
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
+        const time = atTime || audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
 
-        osc.type = beatNumber === 1 ? 'square' : 'square';
+        osc.type = 'square';
         osc.frequency.value = beatNumber === 1 ? 1200 : 1000;
 
-        gain.gain.setValueAtTime(0.001, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.01);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.001, time);
+        gain.gain.exponentialRampToValueAtTime(0.2, time + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
 
         osc.connect(gain);
-        gain.connect(ctx.destination);
+        gain.connect(audioCtx.destination);
 
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.1);
+        osc.start(time);
+        osc.stop(time + 0.1);
     },
 
     /** Stop metronome */
@@ -801,11 +866,21 @@ window.AudioInterop = {
         // Stop any previous reference playback first!
         this.stopReference();
 
-        this.referenceCtx = new (window.AudioContext || window.webkitAudioContext)();
+        console.log('[AudioInterop] playReferenceTone called with frequencies:', swaraFrequencies);
+
+        this.referenceCtx = new (window.AudioContext || window.webkitAudioContext)({
+            latencyHint: 'interactive',
+            sampleRate: this.sampleRate
+        });
         const ctx = this.referenceCtx;
         this.referenceOscillators = [];
 
-        // Generate reference pitch data
+        // Capture the exact start time for visualization - sync with audio
+        const audioStartTime = ctx.currentTime + 0.05; // 50ms buffer for scheduling
+        this.startTime = Date.now() + 50; // Match the audio start time exactly
+        this.isRecording = true;
+
+        // Generate reference pitch data aligned with playback
         this.referencePitchHistory = [];
         let refTime = 0;
 
@@ -813,21 +888,27 @@ window.AudioInterop = {
             const freq = swaraFrequencies[i];
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
+            const onset = audioStartTime + i * durationPerNote;
 
             osc.type = 'sine';
             osc.frequency.value = freq;
 
-            gain.gain.setValueAtTime(0, ctx.currentTime + i * durationPerNote);
-            gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + i * durationPerNote + 0.05);
-            gain.gain.setValueAtTime(0.3, ctx.currentTime + (i + 1) * durationPerNote - 0.05);
-            gain.gain.linearRampToValueAtTime(0, ctx.currentTime + (i + 1) * durationPerNote);
+            gain.gain.setValueAtTime(0, onset);
+            gain.gain.linearRampToValueAtTime(0.3, onset + 0.05);
+            gain.gain.setValueAtTime(0.3, onset + durationPerNote - 0.05);
+            gain.gain.linearRampToValueAtTime(0, onset + durationPerNote);
 
             osc.connect(gain);
             gain.connect(ctx.destination);
 
-            osc.start(ctx.currentTime + i * durationPerNote);
-            osc.stop(ctx.currentTime + (i + 1) * durationPerNote);
+            osc.start(onset);
+            osc.stop(onset + durationPerNote);
             this.referenceOscillators.push(osc);
+
+            // Only play metronome click if it was ALREADY on
+            if (this.metronomeIntervalId) {
+                this.playMetronomeClick(1, ctx, onset);
+            }
 
             for (let t = 0; t < durationPerNote * 1000; t += 50) {
                 this.referencePitchHistory.push({
@@ -841,10 +922,8 @@ window.AudioInterop = {
             refTime += durationPerNote * 1000;
         }
 
-        // Animate
+        // Clear user pitch history for clean visualization
         this.pitchHistory = [];
-        this.startTime = Date.now();
-        this.isRecording = true;
 
         const totalDuration = swaraFrequencies.length * durationPerNote;
         setTimeout(() => {
@@ -853,6 +932,8 @@ window.AudioInterop = {
         }, totalDuration * 1000 + 500);
 
         this.startVisualization();
+        
+        console.log('[AudioInterop] Reference playback started, startTime:', this.startTime);
     },
 
     /** Get current pitch history stats */
@@ -871,7 +952,7 @@ window.AudioInterop = {
 };
 
 // Global error handler for debugging
-window.addEventListener('error', function(e) {
+window.addEventListener('error', function (e) {
     console.error('[GLOBAL ERROR]', e.message, 'at', e.filename, 'line', e.lineno);
 });
 

@@ -1,7 +1,7 @@
 {
   "mainAssemblyName": "Carnatic",
   "resources": {
-    "hash": "sha256-iDTKXUvftda1JsHBKuS3HEEnhFa1v5RNK/0tHGJ311U=",
+    "hash": "sha256-p+wCoyqauv3xQt7E917+HKoVHlUyN/xXDIIXuYiZikA=",
     "jsModuleNative": {
       "dotnet.native.8.0.22.7s2os1xzkn.js": "sha256-vtotCeXt2UD6oc459laJT32vBgigZ+eLoUmdeFkvYDk="
     },
@@ -208,10 +208,10 @@
       "mscorlib.wasm": "sha256-K9gNrsN9UmPqLs6J/FrkiKpmkVGnHjjqUsc7YGvesCY=",
       "netstandard.wasm": "sha256-4emjlXLM9qW3t2tlII20SDylBgG4ueI0wy9nh5FMd8g=",
       "System.Private.CoreLib.wasm": "sha256-2DN4v7I/tabltDEPdIO8sDBB0tY8zOm+0CvHbMssXW4=",
-      "Carnatic.wasm": "sha256-+F2ORa8m1ThfCRWkrDnK8i7dsU8oWKQakDLE+267VQU="
+      "Carnatic.wasm": "sha256-Y3fQ3a7r3hXTCyelwwTiYcnvVOX++R4dAn4FWU012bg="
     },
     "pdb": {
-      "Carnatic.pdb": "sha256-TqbnxscHCabRArKhduysrxOjKiRZcLvK+L2aSbSiy/I="
+      "Carnatic.pdb": "sha256-UJ+R/yQkjMRipAEZvVvzoEvOUQoasriqwQykO5SK2PQ="
     }
   },
   "cacheBootResources": true,

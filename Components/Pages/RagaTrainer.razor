@@ -18,12 +18,24 @@
 <div class="app-container">
     <!-- Header -->
     <header class="app-header">
-        <div class="header-brand">
-            <span class="brand-icon">🎵</span>
-            <h1>Carnatic Raga Trainer</h1>
+        <div class="header-content">
+            <div class="header-brand">
+                <div class="brand-ornament left"></div>
+                <span class="brand-icon">🎼</span>
+                <h1>Carnatic Raga Trainer</h1>
+                <div class="brand-ornament right"></div>
+            </div>
+            <p class="header-subtitle">Visualize • Practice • Perfect your pitch</p>
+            <div class="header-tagline">
+                <span class="tagline-text">Shruti • Swara • Raga</span>
+            </div>
         </div>
-        <p class="header-subtitle">Visualize • Practice • Perfect your pitch</p>
     </header>
+
+    <!-- Decorative Border -->
+    <div class="decorative-border">
+        <div class="border-pattern"></div>
+    </div>
 
     <!-- Controls Panel -->
     <section class="controls-panel">
@@ -86,18 +98,27 @@
         </div>
 
         <div class="control-group control-actions">
-            <button class="btn @(isRecording ? "btn-stop" : "btn-record")"
-                    @onclick="ToggleRecording"
-                    disabled="@(!isInitialized)">
-                <span class="btn-icon">@(isRecording ? "⏹" : "⏺")</span>
-                @(isRecording ? "Stop" : "Record")
-            </button>
-            <button class="btn btn-reference"
-                    @onclick="PlayReference"
-                    disabled="@(isRecording || !isInitialized)">
-                <span class="btn-icon">▶</span>
-                Play Reference
-            </button>
+            <div class="recording-controls">
+                <button class="btn @(isRecording ? "btn-stop" : "btn-record")"
+                        @onclick="ToggleRecording"
+                        disabled="@(!isInitialized)">
+                    <span class="btn-icon">@(isRecording ? "⏹" : "🎤")</span>
+                    @(isRecording ? "Stop" : "Record")
+                </button>
+                <div class="reference-controls">
+                    <button class="btn btn-reference"
+                            @onclick="PlayReference"
+                            disabled="@(isRecording || !isInitialized || isReferencePlaying)">
+                        <span class="btn-icon">▶</span>
+                        Play
+                    </button>
+                    <button class="btn btn-reference-stop"
+                            @onclick="StopReference"
+                            disabled="@(!isReferencePlaying)">
+                        <span class="btn-icon">⏹</span>
+                    </button>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -181,6 +202,8 @@
     private bool isRecording = false;
     private bool isShrutiPlaying = false;
     private bool isMetronomePlaying = false;
+    private bool isReferencePlaying = false;
+    private bool isReferencePaused = false;
     private int bpm = 60;
     private string? errorMessage = null;
     private DotNetObjectReference<RagaTrainer>? dotNetRef;
@@ -250,13 +273,10 @@
     {
         selectedShruti = shrutis.FirstOrDefault(s => s.Name == selectedShrutiName);
 
-        // Stop any playing reference and shruti before changing shruti
-        await JSRuntime.InvokeVoidAsync("AudioInterop.stopReference");
-        
-        if (isShrutiPlaying)
+        // Crossfade tanpura to new shruti if it's playing
+        if (isShrutiPlaying && selectedShruti != null)
         {
-            await JSRuntime.InvokeVoidAsync("AudioInterop.stopShrutiDrone");
-            isShrutiPlaying = false;
+            await JSRuntime.InvokeVoidAsync("AudioInterop.crossfadeShruti", selectedShruti.SaFrequencyHz);
         }
 
         await UpdateSwaraConfig();
@@ -467,20 +487,44 @@
     private async Task PlayReference()
     {
         if (selectedRaga == null || selectedShruti == null) return;
+        
+        if (isReferencePlaying)
+        {
+            await StopReference();
+            return;
+        }
+
+        isReferencePlaying = true;
+        isReferencePaused = false;
 
         var freqs = new List<double>();
+        
+        // Add all swaras from arohanam (starts with Sa)
         foreach (var swara in selectedRaga.Arohanam)
         {
             freqs.Add(CarnaticCatalog.GetSwaraFrequency(swara, selectedShruti.SaFrequencyHz));
         }
+        
+        // Add upper octave Sa to complete the octave
         freqs.Add(CarnaticCatalog.GetSwaraFrequency(Swara.Sa, selectedShruti.SaFrequencyHz, 1));
-        foreach (var swara in selectedRaga.Avarohanam)
-        {
-            freqs.Add(CarnaticCatalog.GetSwaraFrequency(swara, selectedShruti.SaFrequencyHz));
-        }
+
+        // Log the frequencies for debugging
+        Console.WriteLine($"[PlayReference] Playing frequencies: [{string.Join(", ", freqs.Select(f => f.ToString("F2")))}]");
 
         double duration = 60.0 / bpm;
         await JSRuntime.InvokeVoidAsync("AudioInterop.playReferenceTone", freqs, duration);
+        
+        // Reset state after playback completes
+        await Task.Delay((int)(duration * freqs.Count * 1000) + 500);
+        isReferencePlaying = false;
+        isReferencePaused = false;
+    }
+
+    private async Task StopReference()
+    {
+        isReferencePlaying = false;
+        isReferencePaused = false;
+        await JSRuntime.InvokeVoidAsync("AudioInterop.stopReference");
     }
 
     private void ResetStats()
